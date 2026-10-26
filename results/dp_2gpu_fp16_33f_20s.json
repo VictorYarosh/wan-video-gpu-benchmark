@@ -1,0 +1,19 @@
+{
+  "mode": "dp",
+  "gpus": 2,
+  "gpu_name": "Tesla T4",
+  "dtype": "fp16",
+  "resolution": "832x480",
+  "frames": 33,
+  "steps": 20,
+  "total_s": 298.5,
+  "denoise_s": 230.3,
+  "s_per_step": 11.52,
+  "peak_vram_gb": 4.57,
+  "videos": 2,
+  "videos_per_hour": 24.1,
+  "nan_in_output": false,
+  "torch": "2.11.0+cu128",
+  "diffusers": "0.42.0",
+  "python": "3.13.15"
+}

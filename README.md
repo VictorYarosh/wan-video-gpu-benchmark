@@ -12,13 +12,36 @@ This is a small-scale check of the multi-GPU approach I proposed for an 8-GPU vi
 
 ## Results
 
-> Filled in from a real run. Hardware: Kaggle, 2× NVIDIA T4 (16 GB).
+Kaggle, 2× NVIDIA T4 (16 GB, PCIe), fp16, 832×480, 33 frames, 20 steps. torch 2.11.0, diffusers 0.42.0.
 
-_Results table goes here (output of `python src/summarize.py`)._
+| Mode | GPUs | Total, s | Denoise, s | s/step | VAE decode, s | Peak VRAM, GB | Videos/hour |
+|---|---|---|---|---|---|---|---|
+| single | 1 | 278.6 | 217.2 | 10.86 | ~61 | 4.57 | 12.9 |
+| dp | 2 | 298.5 | 230.3 | 11.52 | ~68 | 4.57 | 24.1 |
+| cp (Ulysses) | 2 | 188.9 | ~122 | 6.09 | ~67 | 4.57 | 19.1 |
+
+VAE decode = total − denoise. Raw numbers: [`results/*.json`](results), sample videos: [`results/*.mp4`](results).
+
+![Frames 0, 16 and 32 of the generated video](results/preview.png)
+
+*Prompt: "A cinematic shot of a modern glass office building at sunset, camera slowly flying towards the entrance, warm light, high detail". Frames 0, 16 and 32.*
+
+| | Throughput vs single | One-video latency vs single | Scaling efficiency |
+|---|---|---|---|
+| dp ×2 | **1.87×** | 0.93× (7% slower) | 93% |
+| cp ×2, end-to-end | 1.48× | **1.47× faster** | 74% |
+| cp ×2, denoising only | | **1.78× faster** | 89% |
 
 **Findings:**
 
-- _to be added after the run_
+- **Data parallel is the throughput workhorse.** Two GPUs give 1.87× more videos per hour with no communication between them. Each video is ~7% slower because both workers share the host CPU, RAM and disk. For a queue of many short jobs, independent per-GPU workers are the right default.
+- **Ulysses sequence parallelism works even on T4 over PCIe.** The denoising loop runs 1.78× faster on 2 GPUs (89% efficiency) despite the all-to-all traffic going over PCIe without NVLink.
+- **End-to-end speedup is capped by the VAE decode.** The decoder runs on one GPU and takes ~65 s in every mode. It is ~22% of single-GPU time but ~35% of the cp run, so the overall gain drops from 1.78× to 1.47× (Amdahl's law). The next optimization is a parallel or tiled multi-GPU VAE (as in xDiT's DistVAE), or fewer denoising steps via distillation so that decode matters less.
+- **Parallelism did not change the output.** The single, dp (rank 0) and cp videos use the same seed and are byte-identical files (same MD5). Ulysses splits attention by heads and the rest of the network works token by token, so the math is the same, just spread over two GPUs. This is a cheap correctness check worth keeping in CI for any parallel setup.
+- **Memory is not the bottleneck for the 1.3B model.** With the UMT5-XXL text encoder kept on CPU, the transformer + VAE peak at 4.6 GB of 16 GB. The 14B model in the server design needs ~4× more, which is why that design uses 96 GB GPUs.
+- **fp16 on T4 was numerically stable** for this model (no NaN / black frames), with the VAE kept in fp32.
+
+**What this means for the 8-GPU design:** a pool of data-parallel workers for the bulk of jobs, plus a small Ulysses group (degree 2–4) for long, high-resolution clips where one video's latency matters, with parallel VAE decoding to keep that group efficient.
 
 ## How it works
 
@@ -87,3 +110,4 @@ results/                         JSON metrics and sample videos
 
 - T4 is a 2018-generation GPU: no fast bf16, no FlashAttention 2, PCIe interconnect. Absolute numbers are far below a modern server; the relative scaling between modes is the point.
 - Small model and short clips (33 frames, 480p). Sequence parallelism pays off more on longer, higher-resolution videos, where attention dominates compute.
+- One measured run per mode (after one warmup). Run-to-run variance on shared Kaggle machines was not measured.
