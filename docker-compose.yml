@@ -1,0 +1,20 @@
+# Linux GPU host only (needs NVIDIA Container Toolkit).
+# docker compose run --rm bench --mode single
+services:
+  bench:
+    build: .
+    image: wan-video-gpu-benchmark
+    volumes:
+      - hf-cache:/cache
+      - ./results:/app/results
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:
